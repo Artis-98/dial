@@ -1,0 +1,64 @@
+<!doctype html><html lang=en><head><meta charset=UTF-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>DIAL setup</title>
+<link rel=icon href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' style='color:%23f5a524'%3E%3Cpath d='M18.89 81.11A44 44 0 1 1 81.11 81.11' fill='none' stroke='currentColor' stroke-width='12'/%3E%3Ccircle cx='50' cy='50' r='14' fill='currentColor'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#0f1216;--card:#171b21;--card2:#1d232b;--line:#29313b;--text:#e8edf2;--muted:#8a96a3;--accent:#f5a524;--good:#3fb97a;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#f3f5f7;--card:#fff;--card2:#f6f8fa;--line:#e1e6eb;--text:#151a20;--muted:#6a7682;--accent:#d98a00;--good:#22975c;color-scheme:light}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:440px;margin:0 auto;padding:24px 16px}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}.brand svg{width:44px;height:44px;color:var(--accent)}
+.brand b{display:block;font-size:22px;letter-spacing:.14em;line-height:1}.brand span{color:var(--muted);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px}
+h1{font-size:19px;margin:0 0 4px}p{margin:0 0 14px;color:var(--muted);font-size:14px}
+.nets{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;max-height:280px;overflow:auto}
+.net{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card2);cursor:pointer;font:inherit;color:inherit;text-align:left;width:100%}
+.net.on{border-color:var(--accent)}.net span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.net small{color:var(--muted);flex:none}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input{width:100%;font:inherit;padding:11px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--text)}
+input:focus{outline:2px solid var(--accent);border-color:transparent}
+button.go{width:100%;margin-top:16px;font:inherit;font-weight:600;padding:12px;border-radius:10px;border:0;background:var(--accent);color:#14100a;cursor:pointer}
+.done{display:none}.done svg{width:46px;height:46px;color:var(--good);display:block;margin:4px auto 10px}.done h1,.done p{text-align:center}
+.done code{background:var(--card2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--text)}
+.mac{font-size:12px;color:var(--muted);margin-top:14px;text-align:center}
+footer{display:flex;align-items:center;justify-content:center;gap:8px;color:var(--muted);font-size:13px;margin-top:18px}
+footer .iiteg{height:11px;width:auto;color:var(--text)}
+</style></head><body><main>
+<div class=brand><svg viewBox="0 0 100 100"><path d="M18.89 81.11A44 44 0 1 1 81.11 81.11" fill=none stroke=currentColor stroke-width=12 /><circle cx=50 cy=50 r=14 fill=currentColor /></svg><div><b>DIAL</b><span>Inverter controller</span></div></div>
+<div class=card>
+ <form id=f>
+  <h1>Connect DIAL to your Wi-Fi</h1>
+  <p>Pick your home network and enter its password. DIAL remembers it.</p>
+  <div class=nets id=nets><p>Looking for networks…</p></div>
+  <label for=ssid>Network name</label><input id=ssid name=ssid maxlength=32 autocomplete=off required>
+  <label for=psk>Password</label><input id=psk name=psk maxlength=64 type=password autocomplete=current-password>
+  <button class=go>Connect</button>
+ </form>
+ <div class=done id=done>
+  <svg viewBox="0 0 24 24" fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><circle cx=12 cy=12 r=10 /><path d="M7 12.5l3 3 7-7"/></svg>
+  <h1>DIAL is joining <span id=nm></span></h1>
+  <p>This hotspot closes in a moment. Switch your phone back to your home Wi-Fi and open <code id=host>http://dial.local</code></p>
+  <p>If DIAL cannot connect, the DIAL-Setup hotspot comes back within a minute so you can try again.</p>
+ </div>
+ <div class=mac id=mac></div>
+</div>
+<footer><span>DIAL by</span><svg class=iiteg viewBox="-0.02 -0.04 3.42 1.08"><g fill=currentColor><rect width=.18 height=1 /><rect x=.42 width=.18 height=1 /><rect x=.8 width=.64 height=.18 /><rect x=1.03 width=.18 height=1 /><rect x=1.61 width=.18 height=1 /><rect x=1.61 width=.5 height=.18 /><rect x=1.61 y=.82 width=.5 height=.18 /><rect x=1.61 y=.41 width=.46 height=.18 /><rect x=2.865 y=.43 width=.495 height=.18 /></g><path d="M3.1608 .2156A.425 .425 0 1 0 3.2697 .5148" fill=none stroke=currentColor stroke-width=.18 /></svg></footer>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+function bars(r){return r>-55?'Strong':r>-67?'Good':r>-78?'Fair':'Weak'}
+function load(){fetch('/config.json').then(r=>r.json()).then(c=>{
+ $('#mac').textContent='DIAL '+c.mac;$('#host').textContent='http://'+c.name+'.local';
+ const box=$('#nets'),seen={};box.innerHTML='';
+ c.aps.slice(1).filter(a=>a.ssid&&!seen[a.ssid]&&(seen[a.ssid]=1)).forEach(a=>{
+  const b=document.createElement('button');b.type='button';b.className='net';
+  b.innerHTML='<span></span><small>'+(a.lock?'🔒 ':'')+bars(a.rssi)+'</small>';
+  b.firstChild.textContent=a.ssid;
+  b.onclick=()=>{document.querySelectorAll('.net').forEach(n=>n.classList.remove('on'));b.classList.add('on');$('#ssid').value=a.ssid;$('#psk').focus()};
+  box.append(b)});
+ if(!box.childElementCount)box.innerHTML='<p>No networks found yet. Type the name below.</p>';
+}).catch(()=>{})}
+load();setInterval(()=>{if(!$('#psk').value)load()},8000);
+$('#f').onsubmit=e=>{e.preventDefault();const s=$('#ssid').value,p=$('#psk').value;
+ fetch('/wifisave?ssid='+encodeURIComponent(s)+'&psk='+encodeURIComponent(p)).finally(()=>{
+  $('#f').style.display='none';$('#nm').textContent=s;$('#done').style.display='block'})};
+</script></body></html>

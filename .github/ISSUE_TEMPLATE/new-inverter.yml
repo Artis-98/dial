@@ -1,0 +1,38 @@
+name: New inverter
+description: Ask for support for your inverter, or offer to test a profile
+labels: ["inverter"]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Brand and exact model
+      placeholder: Deye SUN-6K-SG03LP1-EU
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Inverter firmware version, if the screen shows it
+  - type: dropdown
+    id: port
+    attributes:
+      label: Communication port
+      options: [RS485, RS232, CAN, Not sure]
+    validations:
+      required: true
+  - type: textarea
+    id: docs
+    attributes:
+      label: Register map or protocol
+      description: A link to the maker's Modbus PDF, an ha-solarman definition, or anything else you found.
+  - type: textarea
+    id: photo
+    attributes:
+      label: Photo of the ports
+      description: Drag a photo in, with the labels readable.
+  - type: checkboxes
+    id: test
+    attributes:
+      label: Testing
+      options:
+        - label: I can test a profile on my inverter

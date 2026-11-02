@@ -1,0 +1,364 @@
+# DIAL inverter profile: Growatt SPF (tested on SPF 6000 ES Plus).
+#
+# Registers are the ones proven on the owner's inverter (v1 board,
+# growatt-spf-nordpool). Entity names are kept stable: Home Assistant setups
+# rely on them. Built by dial-growatt-spf.yaml; see CONTRIBUTING.md for what
+# a profile has to provide.
+#
+# RS485 on DIAL v2: TX IO17 (DI), RX IO18 (RO), direction IO16 (DE + /RE).
+# The inverter also sends its own 0x4D frames to addresses 2 and 3 every
+# 1.5 s; they are normal, so modbus warnings are muted.
+
+logger:
+  logs:
+    modbus: ERROR
+    modbus_controller: INFO
+
+globals:
+  - id: ha_was_connected
+    type: bool
+    initial_value: "false"
+  - id: ha_lost_min
+    type: int
+    initial_value: "0"
+
+# ------------------------------------------------------------------ RS485 / Modbus
+uart:
+  id: uart_rs485
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+
+modbus:
+  id: modbus_rs485
+  uart_id: uart_rs485
+  flow_control_pin: GPIO16
+
+modbus_controller:
+  - id: inverter
+    address: 1
+    modbus_id: modbus_rs485
+    command_throttle: 250ms
+    setup_priority: -10
+    update_interval: 5s
+    offline_skip_updates: 2
+    on_online:
+      then:
+        - light.turn_on:
+            id: status_led
+            effect: Breathe
+    on_offline:
+      then:
+        - light.turn_on:
+            id: status_led
+            effect: Searching
+
+# ------------------------------------------------------------------ inverter settings (written)
+select:
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: charger_source
+    name: "Charger Source"
+    address: 2
+    value_type: U_WORD
+    icon: "mdi:transmission-tower"
+    optionsmap:
+      "CSO Solar first": 0
+      "SNU Solar + Utility": 1
+      "OSO Solar only": 2
+
+number:
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: charge_current
+    name: "Charge Current Limit"
+    address: 38
+    value_type: U_WORD
+    min_value: 0
+    max_value: 50
+    step: 1
+    unit_of_measurement: "A"
+    icon: "mdi:current-dc"
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: min_soc_r37
+    name: "Min SOC To Start Grid Charge"
+    address: 37
+    value_type: U_WORD
+    min_value: 10
+    max_value: 100
+    step: 1
+    multiply: 10
+    unit_of_measurement: "%"
+    icon: "mdi:battery-arrow-up"
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: back_to_battery_r95
+    name: "Back To Battery SOC"
+    address: 95
+    value_type: U_WORD
+    min_value: 10
+    max_value: 100
+    step: 1
+    multiply: 10
+    unit_of_measurement: "%"
+    icon: "mdi:battery-arrow-up"
+  # Safety net on DIAL itself, off by default: if Home Assistant was connected
+  # and has been gone for 15 minutes, put "Min SOC To Start Grid Charge" back to
+  # this value so a grid charge HA started cannot run on unattended.
+  - platform: template
+    id: fallback_min_soc
+    name: "Fallback Min SOC"
+    min_value: 10
+    max_value: 100
+    step: 1
+    initial_value: 30
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "%"
+    icon: "mdi:shield-check"
+    entity_category: config
+
+switch:
+  - platform: template
+    id: fallback_enable
+    name: "Fallback When HA Lost"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    icon: "mdi:shield-check"
+    entity_category: config
+
+sensor:
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: pv_power
+    name: "PV Power"
+    register_type: read
+    address: 6
+    value_type: U_WORD
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: pv_voltage
+    name: "PV Voltage"
+    register_type: read
+    address: 2
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: battery_soc
+    name: "Battery SOC"
+    register_type: read
+    address: 203
+    value_type: U_WORD
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 0
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: battery_voltage
+    name: "Battery Voltage"
+    register_type: read
+    address: 204
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: battery_direction
+    register_type: read
+    address: 205
+    value_type: S_WORD
+    internal: true
+  # register 27 reads low on the SPF; 6.3 was calibrated against SOC drop on
+  # PV free nights (2026-09-03)
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: load_power
+    name: "Load Power"
+    register_type: read
+    address: 27
+    value_type: U_WORD
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    filters:
+      - multiply: 6.3
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    id: grid_voltage
+    name: "Grid Voltage"
+    register_type: read
+    address: 20
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    name: "Grid Frequency"
+    register_type: read
+    address: 21
+    value_type: U_WORD
+    unit_of_measurement: "Hz"
+    device_class: frequency
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    name: "Output Voltage"
+    register_type: read
+    address: 22
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    name: "Output Frequency"
+    register_type: read
+    address: 23
+    value_type: U_WORD
+    unit_of_measurement: "Hz"
+    device_class: frequency
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    name: "Inverter Temperature 1"
+    register_type: read
+    address: 32
+    value_type: U_WORD
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    name: "Inverter Temperature 2"
+    register_type: read
+    address: 33
+    value_type: U_WORD
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+  # read backs of the two settings registers, kept for existing dashboards
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    name: "Back To Battery SOC Readback"
+    register_type: holding
+    address: 95
+    value_type: U_WORD
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    filters:
+      - multiply: 0.1
+  - platform: modbus_controller
+    modbus_controller_id: inverter
+    name: "Charger Source Raw"
+    register_type: holding
+    address: 2
+    value_type: U_WORD
+    accuracy_decimals: 0
+    entity_category: diagnostic
+  # PV minus load: an estimate, blind to grid charging
+  - platform: template
+    id: battery_power_est
+    name: "Battery Power Estimated"
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: |-
+      if (isnan(id(pv_power).state) || isnan(id(load_power).state)) return NAN;
+      return id(pv_power).state - id(load_power).state;
+  - platform: template
+    name: "Battery Current Estimated"
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 5s
+    lambda: |-
+      if (isnan(id(battery_power_est).state) || isnan(id(battery_voltage).state)) return NAN;
+      if (id(battery_voltage).state < 1.0f) return NAN;
+      return id(battery_power_est).state / id(battery_voltage).state;
+
+text_sensor:
+  - platform: template
+    id: battery_state
+    name: "Battery State"
+    icon: "mdi:battery-sync"
+    update_interval: 5s
+    lambda: |-
+      const float d = id(battery_direction).state;
+      if (isnan(d)) return {"Unknown"};
+      if (d > 0) return {"Charging"};
+      if (d < 0) return {"Discharging"};
+      return {"Idle"};
+
+binary_sensor:
+  # on_online only fires on a change, so ask the controller instead; a reading
+  # must also exist, because the controller starts out "online" at boot
+  - platform: template
+    id: inv_connected
+    name: "Inverter Connected"
+    device_class: connectivity
+    lambda: return !id(inverter).get_module_offline() && !isnan(id(battery_soc).state);
+
+interval:
+  - interval: 60s
+    then:
+      - lambda: |-
+          if (api::global_api_server != nullptr && api::global_api_server->is_connected()) {
+            id(ha_was_connected) = true;
+            id(ha_lost_min) = 0;
+            return;
+          }
+          if (!id(ha_was_connected)) return;  // standalone DIAL, never had HA
+          id(ha_lost_min)++;
+          if (id(ha_lost_min) != 15 || !id(fallback_enable).state) return;
+          const float safe = id(fallback_min_soc).state;
+          const float cur = id(min_soc_r37).state;
+          if (isnan(cur) || cur <= safe) return;
+          ESP_LOGW("dial", "Home Assistant gone 15 min, grid charge start %.0f %%: back to %.0f %%", cur, safe);
+          auto call = id(min_soc_r37).make_call();
+          call.set_value(safe);
+          call.perform();

@@ -1,0 +1,265 @@
+# DIAL core: the board, Wi-Fi, Home Assistant API, DIAL's own page, LED,
+# buttons, history, OLED and firmware updates. Everything inverter specific
+# lives in profiles/; a build file (dial-growatt-spf.yaml) puts the two
+# together. Contributors add profiles and leave this file alone.
+#
+# Every unit is named dial-<last 6 of its MAC> and has no API key of its own
+# until Home Assistant adds it and gives it one (saved on the device).
+# Holding BOOT for 10 s wipes that key and the Wi-Fi.
+#
+# Open http://dial-1a2b3c.local for DIAL's own page (web/dial-ui.js). If DIAL
+# cannot join Wi-Fi it opens the hotspot "DIAL-Setup" (password dialsetup)
+# with the setup page in components/captive_portal.
+#
+# A profile must provide these ids, which the page, the history, the OLED
+# and the LED use: sensors battery_soc, battery_voltage, pv_power,
+# load_power, grid_voltage; text_sensor battery_state; binary_sensor
+# inv_connected. And the substitution `profile` comes from the build file.
+
+substitutions:
+  dial_version: "2.1.0"
+  update_url: https://artis-98.github.io/dial/firmware/${profile}/manifest.json
+
+esphome:
+  name: dial
+  friendly_name: DIAL
+  comment: "DIAL inverter controller by IITEG"
+  name_add_mac_suffix: true
+  project:
+    name: iiteg.dial
+    version: "${dial_version}"
+  on_boot:
+    priority: -100
+    then:
+      - light.turn_on:
+          id: status_led
+          effect: Breathe
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+external_components:
+  # captive_portal: ESPHome's own with DIAL's setup page (web/setup.html)
+  # dial_history: the last 24 h in RAM for the page's charts (/history.json)
+  - source:
+      type: local
+      path: components
+    components: [captive_portal, dial_history]
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  level: DEBUG
+  logs:
+    sensor: INFO
+    text_sensor: INFO
+    number: INFO
+    select: INFO
+    light: INFO
+    component: INFO
+    scheduler: INFO
+
+wifi:
+  reboot_timeout: 0s
+  ap:
+    ssid: "DIAL-Setup"
+    password: "dialsetup"
+
+captive_portal:
+
+web_server:
+  port: 80
+  version: 3
+  js_url: ""
+  js_include: "web/dial-ui.js"
+  log: true
+
+# one point a minute for a day, recorded whether or not the page is open
+dial_history:
+  update_interval: 5s
+  points: 1440
+  point_every: 60s
+  series:
+    - {key: soc, sensor: battery_soc}
+    - {key: pv, sensor: pv_power}
+    - {key: load, sensor: load_power}
+    - {key: bv, sensor: battery_voltage, scale: 100}
+    - {key: grid, sensor: grid_voltage}
+
+ota:
+  - platform: esphome
+  - platform: web_server
+  - platform: http_request
+
+api:
+  reboot_timeout: 0s
+  # No key: Home Assistant sets a random one when it adds the unit, and
+  # from then on the unit only talks encrypted with that key.
+  encryption: {}
+
+# firmware updates from GitHub: Home Assistant and DIAL's page show when a
+# newer release of this profile exists and install it with one press
+http_request:
+  timeout: 20s
+
+update:
+  - platform: http_request
+    id: firmware_update
+    name: "Firmware Update"
+    source: ${update_url}
+    update_interval: 6h
+
+switch:
+  - platform: gpio
+    id: relay
+    name: "Dry Contact"
+    pin: GPIO21
+    restore_mode: ALWAYS_OFF
+    icon: "mdi:electric-switch"
+
+button:
+  - platform: restart
+    name: "Restart"
+    entity_category: config
+  # wipes the API key and Wi-Fi; pressed by holding BOOT for 10 s
+  - platform: factory_reset
+    id: factory_reset_btn
+    internal: true
+
+sensor:
+  # DIAL board
+  - platform: adc
+    id: variant_v
+    name: "Variant ID Voltage"
+    pin: GPIO1
+    attenuation: 12db
+    update_interval: 60s
+    accuracy_decimals: 2
+    entity_category: diagnostic
+  - platform: internal_temperature
+    name: "Chip Temperature"
+    entity_category: diagnostic
+  - platform: uptime
+    name: "Uptime"
+    entity_category: diagnostic
+  - platform: wifi_signal
+    name: "Wi-Fi Signal"
+    update_interval: 30s
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: template
+    name: "Inverter Link"
+    icon: "mdi:swap-horizontal"
+    update_interval: 5s
+    lambda: |-
+      return {id(inv_connected).state ? "Connected" : "No answer"};
+  - platform: template
+    name: "Board Variant"
+    update_interval: 60s
+    entity_category: diagnostic
+    lambda: |-
+      float v = id(variant_v).state;
+      if (isnan(v)) return {"unknown"};
+      if (v > 2.9f) return {"Model S"};
+      if (v > 2.0f) return {"Model S + CAN"};
+      if (v > 1.35f) return {"Model D"};
+      if (v > 0.8f) return {"Model D + CAN"};
+      return {"unknown"};
+  - platform: template
+    name: "Firmware"
+    entity_category: diagnostic
+    update_interval: 1h
+    lambda: return {"DIAL " ESPHOME_PROJECT_VERSION ", ESPHome " ESPHOME_VERSION};
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+
+binary_sensor:
+  - platform: template
+    name: "Home Assistant Connected"
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: return api::global_api_server != nullptr && api::global_api_server->is_connected();
+  - platform: gpio
+    id: boot_button
+    name: "BOOT Button"
+    entity_category: diagnostic
+    pin:
+      number: GPIO0
+      inverted: true
+      ignore_strapping_warning: true
+    # held 10 s: the LED goes solid, and letting go resets DIAL
+    on_press:
+      - delay: 10s
+      - if:
+          condition:
+            binary_sensor.is_on: boot_button
+          then:
+            - light.turn_on:
+                id: status_led
+                brightness: 100%
+                effect: none
+    on_click:
+      min_length: 10s
+      max_length: 60s
+      then:
+        - button.press: factory_reset_btn
+
+output:
+  - platform: ledc
+    id: led_out
+    pin: GPIO2
+
+light:
+  - platform: monochromatic
+    id: status_led
+    name: "Status LED"
+    output: led_out
+    entity_category: config
+    effects:
+      # talking to the inverter
+      - pulse:
+          name: Breathe
+          transition_length: 1500ms
+          update_interval: 1500ms
+      # no answer yet: still breathing, just quicker
+      - pulse:
+          name: Searching
+          transition_length: 400ms
+          update_interval: 400ms
+
+# ------------------------------------------------------------------ OLED, if fitted (Model D)
+i2c:
+  sda: GPIO8
+  scl: GPIO9
+  scan: false
+
+font:
+  - file: "gfonts://Roboto"
+    id: f_small
+    size: 11
+  - file: "gfonts://Roboto@700"
+    id: f_big
+    size: 18
+
+display:
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    address: 0x3C
+    update_interval: 2s
+    lambda: |-
+      it.print(64, 0, id(f_small), TextAlign::TOP_CENTER, id(inv_connected).state ? "DIAL" : "DIAL  no inverter");
+      it.printf(64, 14, id(f_big), TextAlign::TOP_CENTER, "%s", id(battery_state).state.c_str());
+      if (!isnan(id(battery_soc).state)) it.printf(0, 38, id(f_small), "SOC %.0f%%", id(battery_soc).state);
+      if (!isnan(id(battery_voltage).state)) it.printf(127, 38, id(f_small), TextAlign::TOP_RIGHT, "%.1f V", id(battery_voltage).state);
+      if (!isnan(id(pv_power).state)) it.printf(0, 52, id(f_small), "PV %.0f W", id(pv_power).state);
+      if (!isnan(id(load_power).state)) it.printf(127, 52, id(f_small), TextAlign::TOP_RIGHT, "Load %.0f W", id(load_power).state);

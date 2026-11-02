@@ -1,0 +1,6 @@
+# private: the owner's key and the owner's own build
+secrets.yaml
+dial-home.yaml
+# ESPHome build output
+.esphome/
+__pycache__/

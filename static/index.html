@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DIAL firmware</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+:root{--bg:#f6f6f3;--ink:#0b0b0c;--mute:#5f6064;--line:#dcdcd6}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Aptos,"Segoe UI",system-ui,sans-serif}
+main{max-width:640px;margin:0 auto;padding:48px 20px}
+h1{font-size:40px;margin:0 0 6px;letter-spacing:.04em}
+.lab{font:11px/1.4 ui-monospace,Consolas,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:20px;margin:18px 0}
+select,button{font:inherit;padding:10px 14px;border-radius:6px;border:1px solid var(--line);background:#fff}
+button{background:var(--ink);color:var(--bg);border-color:var(--ink);cursor:pointer}
+p{color:var(--mute)}a{color:inherit}
+</style>
+</head>
+<body>
+<main>
+  <span class="lab">DIAL by IITEG</span>
+  <h1>DIAL firmware</h1>
+  <p>Flash a DIAL over USB from Chrome or Edge on a computer. For a DIAL that already runs, use Install update in Home Assistant or on DIAL's own page instead: it keeps your Wi-Fi and Home Assistant key.</p>
+  <div class="card">
+    <span class="lab">Inverter</span>
+    <p><select id="profile"><option value="growatt-spf">Growatt SPF</option></select></p>
+    <esp-web-install-button id="btn" manifest="firmware/growatt-spf/manifest.json">
+      <button slot="activate">Connect DIAL and install</button>
+      <span slot="unsupported">Your browser cannot flash over USB. Use Chrome or Edge on a computer.</span>
+    </esp-web-install-button>
+  </div>
+  <p>Plug DIAL in with a USB-C data cable. If it is not found, hold BOOT, press RESET, let go of BOOT, and try again. Source and releases: <a href="https://github.com/Artis-98/dial">github.com/Artis-98/dial</a>.</p>
+</main>
+<script>
+document.getElementById('profile').onchange = (e) =>
+  document.getElementById('btn').setAttribute('manifest', `firmware/${e.target.value}/manifest.json`);
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# DIAL for Growatt SPF inverters. One build file per profile: copy this,
+# point it at your profile, and GitHub builds the firmware on every release.
+#
+#   esphome run dial-growatt-spf.yaml
+
+substitutions:
+  profile: growatt-spf
+
+packages:
+  core: !include dial-core.yaml
+  inverter: !include profiles/growatt-spf.yaml

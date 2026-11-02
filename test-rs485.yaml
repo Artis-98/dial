@@ -1,0 +1,153 @@
+# DIAL v2 RS485 bring-up: no Modbus stack, direction pin under manual control.
+#
+#   esphome run test-rs485.yaml --device dial-demo.local
+#
+# Every byte on the bus is logged (uart_debug). Three tests:
+#   "Hold DE high": the transceiver's receiver turns off (DE and /RE are tied), so
+#     the bus traffic must vanish from the log. If it does not, IO16 is not
+#     reaching U3 (check the ESP module's pad 9 joint).
+#   "Auto poll": sends a Modbus read of input register 0 to address 1 every 3 s
+#     with the direction pin handled here, then listens.
+#   "TX test": holds DE high and streams 0x00 for 8 s. A multimeter on DC volts
+#     between J3 pin 4 (A) and pin 5 (B) reads about +2 V when idle with DE held,
+#     and goes negative during the stream. No change means IO17 never reaches DI.
+#
+# Same device name as dial.yaml (dial.local) so OTA and the saved Wi-Fi carry over.
+
+esphome:
+  name: dial
+  friendly_name: DIAL RS485 test
+  comment: "DIAL v2 RS485 bring-up"
+  project:
+    name: iiteg.dial
+    version: "2.0-rs485-test"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  level: DEBUG
+  logs:
+    sensor: INFO
+    switch: INFO
+    component: INFO
+
+wifi:
+  reboot_timeout: 0s
+  ap:
+    ssid: "DIAL-Setup"
+    password: "dialdemo"
+
+captive_portal:
+
+web_server:
+  port: 80
+  version: 3
+
+ota:
+  - platform: esphome
+
+api:
+  reboot_timeout: 0s
+
+uart:
+  id: uart_rs485
+  tx_pin: GPIO17
+  rx_pin: GPIO18
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  debug:
+    direction: BOTH
+    dummy_receiver: true
+    after:
+      timeout: 4ms
+    sequence:
+      - lambda: UARTDebug::log_hex(direction, bytes, ':');
+
+output:
+  - platform: gpio
+    id: de_out
+    pin: GPIO16
+
+switch:
+  - platform: template
+    id: de_hold
+    name: "Hold DE high (receiver off)"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - output.turn_on: de_out
+      - logger.log: "DE held HIGH: bus traffic should stop appearing now"
+    turn_off_action:
+      - output.turn_off: de_out
+      - logger.log: "DE released LOW: listening again"
+  - platform: template
+    id: tx_test
+    name: "TX test (8 s of 0x00, DE high)"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - switch.turn_off: auto_poll
+      - output.turn_on: de_out
+      - logger.log: "TX test: streaming 0x00 for 8 s"
+      - delay: 8s
+      - switch.turn_off: tx_test
+    turn_off_action:
+      - output.turn_off: de_out
+      - logger.log: "TX test over"
+  - platform: template
+    id: auto_poll
+    name: "Auto poll address 1"
+    optimistic: true
+    restore_mode: ALWAYS_ON
+
+button:
+  - platform: template
+    name: "Send one request"
+    on_press:
+      - script.execute: send_req
+  - platform: restart
+    name: "Restart DIAL"
+
+script:
+  - id: send_req
+    then:
+      - lambda: |-
+          if (id(de_hold).state) return;
+          // read input register 0 (inverter status), slave 1
+          static const uint8_t req[] = {0x01, 0x04, 0x00, 0x00, 0x00, 0x01, 0x31, 0xCA};
+          id(de_out).turn_on();
+          id(uart_rs485).write_array(req, sizeof(req));
+          id(uart_rs485).flush();
+          id(de_out).turn_off();
+          ESP_LOGD("test", "request sent, DE low again");
+
+interval:
+  - interval: 20ms
+    then:
+      - if:
+          condition:
+            switch.is_on: tx_test
+          then:
+            - lambda: |-
+                // 20 bytes = ~21 ms at 9600 baud, keeps the line busy
+                static const uint8_t z[20] = {0};
+                id(uart_rs485).write_array(z, sizeof(z));
+  - interval: 3s
+    then:
+      - if:
+          condition:
+            switch.is_on: auto_poll
+          then:
+            - script.execute: send_req

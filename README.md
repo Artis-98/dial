@@ -18,6 +18,12 @@ firmware is free for anyone, and so is adding your inverter to it.
 Your inverter is not listed? See [CONTRIBUTING.md](CONTRIBUTING.md). A new
 inverter is one profile file; the page and everything else adapt to it.
 
+## Smart charging
+
+To have Home Assistant charge the battery from the grid at the cheapest
+time, install [DIAL Smart Charge](https://github.com/Artis-98/dial-smart-charge)
+from HACS. It finds a DIAL by itself.
+
 ## Updating your DIAL
 
 * **Home Assistant** shows "Firmware Update" when a new release is out.

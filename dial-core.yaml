@@ -17,7 +17,7 @@
 # inv_connected. And the substitution `profile` comes from the build file.
 
 substitutions:
-  dial_version: "2.1.0"
+  dial_version: "2.2.0"
   update_url: https://artis-98.github.io/dial/firmware/${profile}/manifest.json
 
 esphome:
@@ -28,12 +28,22 @@ esphome:
   project:
     name: iiteg.dial
     version: "${dial_version}"
+  # the alert list, the write check and their texts (dial-pcb/docs/ALERTS.md)
+  includes:
+    - dial_alerts.h
   on_boot:
     priority: -100
     then:
       - light.turn_on:
           id: status_led
           effect: Breathe
+      - lambda: |-
+          dial::alert_set(dial::STARTING, true);
+          const esp_reset_reason_t r = esp_reset_reason();
+          // shown for the first hour after such a restart
+          if (r == ESP_RST_BROWNOUT) dial::alert_pulse(dial::BROWNOUT, 3600000);
+          if (r == ESP_RST_PANIC || r == ESP_RST_INT_WDT || r == ESP_RST_TASK_WDT || r == ESP_RST_WDT)
+            dial::alert_pulse(dial::CRASHED, 3600000);
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -95,8 +105,14 @@ dial_history:
 
 ota:
   - platform: esphome
+    on_begin: {then: [lambda: "dial::alert_set(dial::UPDATING, true);"]}
+    on_error: {then: [lambda: "dial::alert_set(dial::UPDATING, false);"]}
   - platform: web_server
+    on_begin: {then: [lambda: "dial::alert_set(dial::UPDATING, true);"]}
+    on_error: {then: [lambda: "dial::alert_set(dial::UPDATING, false);"]}
   - platform: http_request
+    on_begin: {then: [lambda: "dial::alert_set(dial::UPDATING, true);"]}
+    on_error: {then: [lambda: "dial::alert_set(dial::UPDATING, false);"]}
 
 api:
   reboot_timeout: 0s
@@ -144,12 +160,14 @@ sensor:
     accuracy_decimals: 2
     entity_category: diagnostic
   - platform: internal_temperature
+    id: chip_temp
     name: "Chip Temperature"
     entity_category: diagnostic
   - platform: uptime
     name: "Uptime"
     entity_category: diagnostic
   - platform: wifi_signal
+    id: wifi_rssi
     name: "Wi-Fi Signal"
     update_interval: 30s
     entity_category: diagnostic
@@ -162,6 +180,7 @@ text_sensor:
     lambda: |-
       return {id(inv_connected).state ? "Connected" : "No answer"};
   - platform: template
+    id: board_variant
     name: "Board Variant"
     update_interval: 60s
     entity_category: diagnostic
@@ -182,6 +201,25 @@ text_sensor:
     ip_address:
       name: "IP Address"
       entity_category: diagnostic
+  # alerts: published by the alert interval below, only when they change
+  - platform: template
+    id: alert_code
+    name: "Alert"
+    icon: "mdi:alert-circle-outline"
+  - platform: template
+    id: alert_text
+    name: "Alert Message"
+    icon: "mdi:message-alert-outline"
+  - platform: template
+    id: alert_all
+    name: "Alerts Active"
+    icon: "mdi:format-list-bulleted"
+    entity_category: diagnostic
+  - platform: template
+    id: write_last_ts
+    name: "Last Setting Write"
+    icon: "mdi:pencil-check"
+    entity_category: diagnostic
 
 binary_sensor:
   - platform: template
@@ -189,6 +227,11 @@ binary_sensor:
     device_class: connectivity
     entity_category: diagnostic
     lambda: return api::global_api_server != nullptr && api::global_api_server->is_connected();
+  # on while any critical or warning alert is active
+  - platform: template
+    id: dial_problem
+    name: "Problem"
+    device_class: problem
   - platform: gpio
     id: boot_button
     name: "BOOT Button"
@@ -204,10 +247,13 @@ binary_sensor:
           condition:
             binary_sensor.is_on: boot_button
           then:
+            - lambda: "dial::alert_set(dial::RESET_HOLD, true);"
             - light.turn_on:
                 id: status_led
                 brightness: 100%
                 effect: none
+    on_release:
+      - lambda: "dial::alert_set(dial::RESET_HOLD, false);"
     on_click:
       min_length: 10s
       max_length: 60s
@@ -236,6 +282,90 @@ light:
           name: Searching
           transition_length: 400ms
           update_interval: 400ms
+
+# ------------------------------------------------------------------ alerts
+# The list and texts are in dial_alerts.h. This collects the conditions the
+# core can see, publishes the Alert entities when they change, and sets the
+# LED: quick breath for a critical alert, normal breath otherwise (no
+# blinking, by choice). Profiles add their own (inverter_hot, write checks).
+number:
+  - platform: template
+    id: low_batt_level
+    name: "Low Battery Alert"
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 20
+    optimistic: true
+    restore_value: true
+    unit_of_measurement: "%"
+    icon: "mdi:battery-alert-variant-outline"
+    entity_category: config
+
+globals:
+  - id: ha_seen
+    type: bool
+    initial_value: "false"
+  - id: ha_gone_s
+    type: int
+    initial_value: "0"
+  - id: alert_shown
+    type: std::string
+    initial_value: '""'
+
+interval:
+  - interval: 2s
+    then:
+      - lambda: |-
+          using namespace dial;
+          const uint32_t up = millis() / 1000;
+          const bool inv = id(inv_connected).state;
+
+          alert_set(STARTING, !inv && up <= 30);
+          alert_set(NO_INVERTER, !inv && up > 30);
+
+          const float soc = id(battery_soc).state, bv = id(battery_voltage).state;
+          alert_set(LOW_BATTERY, inv && !std::isnan(soc) && soc < id(low_batt_level).state);
+          alert_set(WRONG_PROFILE, inv && ((!std::isnan(soc) && (soc < 0 || soc > 100)) ||
+                                           (!std::isnan(bv) && (bv < 5 || bv > 100))));
+          const float gv = id(grid_voltage).state;
+          alert_set(GRID_DOWN, inv && !std::isnan(gv) && gv < 100);
+
+          const bool ha = api::global_api_server != nullptr && api::global_api_server->is_connected();
+          if (ha) { id(ha_seen) = true; id(ha_gone_s) = 0; }
+          else if (id(ha_seen)) id(ha_gone_s) += 2;
+          alert_set(HA_LOST, id(ha_seen) && id(ha_gone_s) > 120);
+
+          const float ct = id(chip_temp).state, rssi = id(wifi_rssi).state;
+          alert_set(CHIP_HOT, !std::isnan(ct) && ct > 85);
+          alert_set(WEAK_WIFI, !std::isnan(rssi) && rssi < -82);
+          alert_set(HW_UNKNOWN, up > 150 && id(board_variant).state == "unknown");
+          alert_set(DRY_CONTACT, id(relay).state);
+
+          write_tick();
+          alert_tick();
+
+          const int top = alert_top();
+          const std::string code = top < 0 ? "ok" : ALERTS[top].code;
+          const std::string all = alert_list();
+          if (id(alert_code).state != code) {
+            id(alert_code).publish_state(code);
+            id(alert_text).publish_state(top < 0 ? "All good" : ALERTS[top].text);
+          }
+          if (id(alert_all).state != all) id(alert_all).publish_state(all);
+          if (id(write_last_ts).state != write_last) id(write_last_ts).publish_state(write_last);
+          const int worst = alert_worst();
+          const bool problem = worst >= WARNING;
+          if (!id(dial_problem).has_state() || id(dial_problem).state != problem) id(dial_problem).publish_state(problem);
+
+          if (alert_on[RESET_HOLD]) return;  // the LED is solid while BOOT is held
+          const std::string fx = worst == CRITICAL ? "Searching" : "Breathe";
+          if (id(alert_shown) != fx) {
+            id(alert_shown) = fx;
+            auto call = id(status_led).turn_on();
+            call.set_effect(fx);
+            call.perform();
+          }
 
 # ------------------------------------------------------------------ OLED, if fitted (Model D)
 i2c:

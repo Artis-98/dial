@@ -45,16 +45,7 @@ modbus_controller:
     setup_priority: -10
     update_interval: 5s
     offline_skip_updates: 2
-    on_online:
-      then:
-        - light.turn_on:
-            id: status_led
-            effect: Breathe
-    on_offline:
-      then:
-        - light.turn_on:
-            id: status_led
-            effect: Searching
+    # the LED follows the alerts in dial-core (no_inverter is critical)
 
 # ------------------------------------------------------------------ inverter settings (written)
 select:
@@ -69,6 +60,13 @@ select:
       "CSO Solar first": 0
       "SNU Solar + Utility": 1
       "OSO Solar only": 2
+    # write check (dial_alerts.h): confirm each write on the next reads
+    write_lambda: |-
+      dial::write_sent(3, "Charger Source", value);
+      return value;
+    lambda: |-
+      dial::write_read(3, x);
+      return {};
 
 number:
   - platform: modbus_controller
@@ -82,6 +80,12 @@ number:
     step: 1
     unit_of_measurement: "A"
     icon: "mdi:current-dc"
+    write_lambda: |-
+      dial::write_sent(0, "Charge Current Limit", x);
+      return x;  // a write_lambda's value goes out as is, so the multiply is ours
+    lambda: |-
+      dial::write_read(0, x);
+      return {};
   - platform: modbus_controller
     modbus_controller_id: inverter
     id: min_soc_r37
@@ -89,11 +93,17 @@ number:
     address: 37
     value_type: U_WORD
     min_value: 10
-    max_value: 100
+    max_value: 95  # the inverter refuses more
     step: 1
     multiply: 10
     unit_of_measurement: "%"
     icon: "mdi:battery-arrow-up"
+    write_lambda: |-
+      dial::write_sent(1, "Min SOC To Start Grid Charge", x);
+      return x * 10;  // a write_lambda's value goes out as is, so the multiply is ours
+    lambda: |-
+      dial::write_read(1, x);
+      return {};
   - platform: modbus_controller
     modbus_controller_id: inverter
     id: back_to_battery_r95
@@ -106,6 +116,12 @@ number:
     multiply: 10
     unit_of_measurement: "%"
     icon: "mdi:battery-arrow-up"
+    write_lambda: |-
+      dial::write_sent(2, "Back To Battery SOC", x);
+      return x * 10;  // a write_lambda's value goes out as is, so the multiply is ours
+    lambda: |-
+      dial::write_read(2, x);
+      return {};
   # Safety net on DIAL itself, off by default: if Home Assistant was connected
   # and has been gone for 15 minutes, put "Min SOC To Start Grid Charge" back to
   # this value so a grid charge HA started cannot run on unattended.
@@ -255,6 +271,7 @@ sensor:
       - multiply: 0.01
   - platform: modbus_controller
     modbus_controller_id: inverter
+    id: inv_temp1
     name: "Inverter Temperature 1"
     register_type: read
     address: 32
@@ -267,6 +284,7 @@ sensor:
       - multiply: 0.1
   - platform: modbus_controller
     modbus_controller_id: inverter
+    id: inv_temp2
     name: "Inverter Temperature 2"
     register_type: read
     address: 33
@@ -350,6 +368,7 @@ interval:
           if (api::global_api_server != nullptr && api::global_api_server->is_connected()) {
             id(ha_was_connected) = true;
             id(ha_lost_min) = 0;
+            dial::alert_set(dial::FALLBACK_FIRED, false);
             return;
           }
           if (!id(ha_was_connected)) return;  // standalone DIAL, never had HA
@@ -362,3 +381,11 @@ interval:
           auto call = id(min_soc_r37).make_call();
           call.set_value(safe);
           call.perform();
+          dial::alert_set(dial::FALLBACK_FIRED, true);
+  # inverter_hot: either heat sink above 75 C (SPF derates in the 80s)
+  - interval: 10s
+    then:
+      - lambda: |-
+          const float t1 = id(inv_temp1).state, t2 = id(inv_temp2).state;
+          const float t = std::isnan(t1) ? t2 : (std::isnan(t2) ? t1 : std::max(t1, t2));
+          dial::alert_set(dial::INVERTER_HOT, id(inv_connected).state && !std::isnan(t) && t > 75);

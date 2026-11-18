@@ -99,6 +99,10 @@ footer{display:flex;align-items:center;justify-content:center;gap:9px;color:var(
 footer .mark{width:16px;height:16px;color:var(--accent)}footer .iiteg{height:11px;width:auto;color:var(--text)}footer a{color:var(--muted);text-decoration:none}footer a:hover{color:var(--text)}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%) translateY(20px);background:var(--card2);border:1px solid var(--line);padding:10px 16px;border-radius:12px;opacity:0;transition:.2s;pointer-events:none;font-size:14px;z-index:9}
 #toast.show{opacity:1;transform:translateX(-50%)}
+.alert{display:flex;gap:12px;align-items:flex-start;border-radius:var(--r);padding:14px 16px;margin-bottom:16px;border:1px solid var(--line);background:var(--card)}
+.alert i{width:10px;height:10px;border-radius:50%;flex:none;margin-top:6px;background:var(--muted)}
+.alert b{display:block}.alert p{margin:2px 0 0;color:var(--muted);font-size:13px}
+.alert.crit{border-color:var(--bad)}.alert.crit i{background:var(--bad)}.alert.warn{border-color:var(--warn)}.alert.warn i{background:var(--warn)}
 @media (max-width:760px){.hero,.cols{grid-template-columns:1fr}.gauge{max-width:260px}}
 @media (max-width:520px){.pills{justify-content:flex-start;width:100%}.wrap{padding:12px}.card{padding:14px}.hero{gap:14px}}
 @media (max-width:420px){.tile .v{font-size:22px}.pill{font-size:12px;padding:5px 9px}.tiles{gap:8px}.tile{padding:11px}}
@@ -115,6 +119,7 @@ footer .mark{width:16px;height:16px;color:var(--accent)}footer .iiteg{height:11p
   <div class="brand">${MARK('mark')}<div><b>DIAL</b><span>Inverter controller</span></div></div>
   <div class="pills"><span class="pill" id="p-inv"><i></i><span>Connecting</span></span><span class="pill" id="p-ha"><i></i><span>Home Assistant</span></span></div>
 </header>
+<div class="alert" id="alert" hidden><i></i><div><b id="alert-h"></b><p id="alert-p"></p></div></div>
 <section class="card hero">
   <div class="gauge"><svg viewBox="0 0 200 200">
     <path d="M43.4 156.6A80 80 0 1 1 156.6 156.6" fill="none" stroke="var(--line)" stroke-width="14" stroke-linecap="round"/>
@@ -155,6 +160,7 @@ footer .mark{width:16px;height:16px;color:var(--accent)}footer .iiteg{height:11p
   <dl class="kv" style="margin-top:12px">
     <dt>Board</dt><dd data-t="text_sensor/Board Variant">—</dd>
     <dt>Firmware</dt><dd data-t="text_sensor/Firmware">—</dd>
+    <dt>Last setting write</dt><dd data-t="text_sensor/Last Setting Write">—</dd>
     <dt>IP address</dt><dd data-t="text_sensor/IP Address">—</dd>
     <dt>Wi-Fi signal</dt><dd><span data-v="sensor/Wi-Fi Signal" data-d="0">—</span> dBm</dd>
     <dt>Uptime</dt><dd id="uptime">—</dd>
@@ -179,6 +185,10 @@ footer .mark{width:16px;height:16px;color:var(--accent)}footer .iiteg{height:11p
   const enc = encodeURIComponent;
 
   const SRC_LABEL = { 'CSO Solar first': 'Solar first', 'SNU Solar + Utility': 'Solar + grid', 'OSO Solar only': 'Solar only' };
+
+  // severities as in dial_alerts.h; anything else is a warning
+  const ALERT_CRIT = ['no_inverter', 'write_failed', 'fallback_fired'];
+  const ALERT_INFO = ['weak_wifi', 'updating', 'starting', 'setting_set', 'grid_down', 'dry_contact'];
 
   let raf = 0;
   const render = () => { if (!raf) raf = requestAnimationFrame(draw); };
@@ -205,6 +215,16 @@ footer .mark{width:16px;height:16px;color:var(--accent)}footer .iiteg{height:11p
     dot.setAttribute('stroke', col);
     const bp = num('sensor/Battery Power Estimated');
     $('#t-bp').textContent = bp === null ? '—' : (bp > 0 ? '+' : '') + bp.toFixed(0);
+
+    // alert banner: the top alert from dial_alerts.h, hidden when all is fine
+    const ac = val('text_sensor/Alert'), al = $('#alert');
+    al.hidden = !online || !ac || ac === 'ok';
+    if (!al.hidden) {
+      const sev = ALERT_CRIT.includes(ac) ? 'crit' : ALERT_INFO.includes(ac) ? '' : 'warn';
+      al.className = 'alert ' + sev;
+      $('#alert-h').textContent = sev === 'crit' ? 'Needs attention' : sev === 'warn' ? 'Warning' : 'Note';
+      $('#alert-p').textContent = val('text_sensor/Alert Message') || ac;
+    }
 
     // link pills
     const inv = $('#p-inv'), ha = $('#p-ha');
